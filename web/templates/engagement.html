@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Engagement — Social AI{% endblock %}
+{% block content %}
+<h1>💬 Gestión de Engagement</h1>
+
+<div class="card">
+  <div style="display:flex;gap:1rem;flex-wrap:wrap">
+    <button class="btn btn-primary" onclick="fetchComments()">🔄 Actualizar comentarios</button>
+    <button class="btn btn-secondary" onclick="generateAll()">🤖 Generar respuestas IA</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>📝 Comentarios que requieren respuesta</h2>
+  {% if comments %}
+  <div id="comments-list">
+    {% for c in comments %}
+    <div class="card" id="comment-{{ c.id }}" style="border-left:3px solid
+      {% if c.sentiment == 'positive' %}#059669{% elif c.sentiment == 'negative' %}#dc2626{% else %}#6366f1{% endif %}">
+      <div style="display:flex;justify-content:space-between;margin-bottom:.5rem">
+        <strong>@{{ c.author_username }}</strong>
+        <div>
+          <span class="badge
+            {% if c.sentiment == 'positive' %}badge-green{% elif c.sentiment == 'negative' %}badge-red{% else %}badge-blue{% endif %}">
+            {{ c.sentiment }}
+          </span>
+          <span class="badge badge-blue" style="margin-left:.3rem">{{ c.platform }}</span>
+        </div>
+      </div>
+      <p style="color:#ccc;margin-bottom:.8rem">"{{ c.text }}"</p>
+      {% if c.response_text %}
+      <div style="background:#0f0f1a;padding:.8rem;border-radius:8px;margin-bottom:.8rem">
+        <small style="color:#888">Respuesta generada:</small>
+        <p id="response-text-{{ c.id }}" style="margin-top:.3rem;color:#a78bfa">{{ c.response_text }}</p>
+        <textarea id="response-edit-{{ c.id }}" style="display:none;margin-top:.5rem;height:80px">{{ c.response_text }}</textarea>
+      </div>
+      <div style="display:flex;gap:.5rem">
+        <button class="btn btn-primary" style="padding:.3rem .8rem;font-size:.8rem"
+          onclick="approveComment({{ c.id }})">✅ Aprobar y publicar</button>
+        <button class="btn btn-secondary" style="padding:.3rem .8rem;font-size:.8rem"
+          onclick="editResponse({{ c.id }})">✏️ Editar</button>
+        <button class="btn btn-danger" style="padding:.3rem .8rem;font-size:.8rem"
+          onclick="skipComment({{ c.id }})">✕ Omitir</button>
+      </div>
+      {% else %}
+      <button class="btn btn-secondary" style="padding:.3rem .8rem;font-size:.8rem"
+        onclick="generateSingle({{ c.id }})">🤖 Generar respuesta</button>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p style="color:#888">No hay comentarios pendientes de respuesta.</p>
+  {% endif %}
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+async function fetchComments(){
+  toast('Obteniendo comentarios...');
+  await api('/api/engagement/fetch-comments','POST');
+  setTimeout(()=>location.reload(),2000);
+}
+async function generateAll(){
+  toast('Generando respuestas con IA...');
+  await api('/api/engagement/generate-responses','POST');
+  setTimeout(()=>location.reload(),3000);
+}
+async function approveComment(id){
+  toast('Publicando respuesta...');
+  try{
+    const d=await api('/api/engagement/approve-comment','POST',{comment_id:id});
+    if(d.success){
+      document.getElementById(`comment-${id}`).style.opacity='.4';
+      toast('Respuesta publicada');
+    }else toast('Error al publicar','error');
+  }catch(e){toast(e.message,'error');}
+}
+function editResponse(id){
+  const txt=document.getElementById(`response-text-${id}`);
+  const ta=document.getElementById(`response-edit-${id}`);
+  txt.style.display='none';
+  ta.style.display='block';
+  ta.focus();
+}
+function skipComment(id){
+  document.getElementById(`comment-${id}`).remove();
+}
+async function generateSingle(id){
+  toast('Generando respuesta...');
+  await api('/api/engagement/generate-responses','POST');
+  setTimeout(()=>location.reload(),3000);
+}
+</script>
+{% endblock %}

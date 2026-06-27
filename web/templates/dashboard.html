@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Social AI{% endblock %}
+{% block content %}
+<h1>📊 Dashboard — {{ brand_name }}</h1>
+<p style="color:#888;margin-bottom:1.5rem">Nicho: <strong>{{ niche }}</strong> | IA: <span class="badge {% if ai_status == 'online' %}badge-green{% else %}badge-red{% endif %}">{{ ai_status }}</span></p>
+
+<div class="grid3">
+  <div class="card stat">
+    <div class="value">{{ total_content }}</div>
+    <div class="label">Piezas de contenido</div>
+  </div>
+  <div class="card stat">
+    <div class="value">{{ queue.queued }}</div>
+    <div class="label">Posts en cola</div>
+  </div>
+  <div class="card stat">
+    <div class="value">{{ pending_comments }}</div>
+    <div class="label">Comentarios pendientes</div>
+  </div>
+</div>
+
+<div class="grid2">
+  <div class="card">
+    <h2>📅 Próximas publicaciones</h2>
+    {% if queue.upcoming %}
+    <table>
+      <tr><th>ID</th><th>Plataforma</th><th>Fecha</th></tr>
+      {% for p in queue.upcoming %}
+      <tr>
+        <td>#{{ p.id }}</td>
+        <td><span class="badge badge-blue">{{ p.platform }}</span></td>
+        <td>{{ p.scheduled_at[:16] }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p style="color:#888">No hay publicaciones programadas.</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>⚡ Acciones rápidas</h2>
+    <div style="display:flex;flex-direction:column;gap:.8rem">
+      <button class="btn btn-primary" onclick="suggestTopics()">💡 Sugerir temas</button>
+      <button class="btn btn-secondary" onclick="fetchComments()">🔄 Obtener comentarios</button>
+      <button class="btn btn-secondary" onclick="generateResponses()">✍️ Generar respuestas</button>
+      <a href="/research" class="btn btn-secondary" style="text-align:center">🔍 Analizar competencia</a>
+    </div>
+  </div>
+</div>
+
+<div class="card" id="topics-section" style="display:none">
+  <h2>💡 Temas sugeridos para tu nicho</h2>
+  <div id="topics-list" style="display:flex;flex-direction:column;gap:.5rem"></div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+async function suggestTopics(){
+  toast('Generando temas con IA...');
+  try{
+    const d=await api('/api/content/suggest-topics','POST');
+    document.getElementById('topics-section').style.display='block';
+    const list=document.getElementById('topics-list');
+    list.innerHTML=d.topics.map((t,i)=>`
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:.6rem;background:#0f0f1a;border-radius:8px">
+        <span>${i+1}. ${t}</span>
+        <button class="btn btn-primary" style="padding:.3rem .8rem;font-size:.8rem"
+          onclick="generateScript('${t.replace(/'/g,"\\'")}')">Crear guión</button>
+      </div>`).join('');
+    toast('Temas generados!');
+  }catch(e){toast(e.message,'error');}
+}
+async function generateScript(topic){
+  toast('Generando guión...');
+  try{
+    const d=await api('/api/content/generate-script','POST',{topic,format:'tutorial',platform:'instagram',duration:45});
+    toast(`Guión creado: "${d.title}"`);
+    setTimeout(()=>window.location.href='/content',1500);
+  }catch(e){toast(e.message,'error');}
+}
+async function fetchComments(){
+  toast('Obteniendo comentarios...');
+  await api('/api/engagement/fetch-comments','POST');
+  toast('Comentarios actualizados');
+}
+async function generateResponses(){
+  toast('Generando respuestas con IA...');
+  await api('/api/engagement/generate-responses','POST');
+  toast('Respuestas generadas — revisa la sección Engagement');
+}
+</script>
+{% endblock %}

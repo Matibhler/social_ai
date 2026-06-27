@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Social AI{% endblock %}</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:'Segoe UI',sans-serif;background:#0f0f1a;color:#e0e0e0;display:flex;min-height:100vh}
+    .sidebar{width:220px;background:#161625;padding:1.5rem 1rem;display:flex;flex-direction:column;gap:.5rem;position:fixed;height:100vh;overflow-y:auto}
+    .sidebar .logo{font-size:1.3rem;font-weight:700;color:#a78bfa;margin-bottom:1rem;text-align:center}
+    .sidebar a{display:flex;align-items:center;gap:.6rem;padding:.6rem .8rem;border-radius:8px;color:#aaa;text-decoration:none;font-size:.9rem;transition:all .15s}
+    .sidebar a:hover,.sidebar a.active{background:#2d2a4a;color:#a78bfa}
+    .main{margin-left:220px;padding:2rem;flex:1;max-width:calc(100vw - 220px)}
+    h1{font-size:1.8rem;color:#a78bfa;margin-bottom:1.5rem}
+    h2{font-size:1.2rem;color:#c4b5fd;margin-bottom:1rem}
+    .card{background:#161625;border-radius:12px;padding:1.5rem;margin-bottom:1.5rem;border:1px solid #2d2a4a}
+    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:1.5rem}
+    .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:1.5rem}
+    .stat{text-align:center;padding:1rem}
+    .stat .value{font-size:2.5rem;font-weight:700;color:#a78bfa}
+    .stat .label{color:#888;font-size:.85rem;margin-top:.3rem}
+    .badge{display:inline-block;padding:.2rem .6rem;border-radius:99px;font-size:.75rem;font-weight:600}
+    .badge-green{background:#065f46;color:#6ee7b7}
+    .badge-red{background:#7f1d1d;color:#fca5a5}
+    .badge-yellow{background:#78350f;color:#fcd34d}
+    .badge-blue{background:#1e3a5f;color:#93c5fd}
+    .btn{display:inline-block;padding:.5rem 1.2rem;border-radius:8px;border:none;cursor:pointer;font-size:.9rem;font-weight:600;transition:opacity .15s}
+    .btn:hover{opacity:.85}
+    .btn-primary{background:#7c3aed;color:#fff}
+    .btn-secondary{background:#2d2a4a;color:#a78bfa}
+    .btn-danger{background:#7f1d1d;color:#fca5a5}
+    input,select,textarea{background:#0f0f1a;border:1px solid #2d2a4a;color:#e0e0e0;border-radius:8px;padding:.5rem .8rem;font-size:.9rem;width:100%}
+    input:focus,select:focus,textarea:focus{outline:2px solid #7c3aed;border-color:#7c3aed}
+    table{width:100%;border-collapse:collapse}
+    th{background:#2d2a4a;color:#a78bfa;padding:.6rem;text-align:left;font-size:.85rem}
+    td{padding:.6rem;border-bottom:1px solid #1e1e30;font-size:.85rem}
+    .alert{padding:.8rem 1rem;border-radius:8px;margin-bottom:1rem;font-size:.9rem}
+    .alert-info{background:#1e3a5f;color:#93c5fd;border:1px solid #2563eb}
+    #toast{position:fixed;bottom:2rem;right:2rem;background:#7c3aed;color:#fff;padding:1rem 1.5rem;border-radius:10px;display:none;z-index:999;font-weight:600}
+  </style>
+</head>
+<body>
+<nav class="sidebar">
+  <div class="logo">🤖 Social AI</div>
+  <a href="/" {% if active=='dashboard' %}class="active"{% endif %}>📊 Dashboard</a>
+  <a href="/research" {% if active=='research' %}class="active"{% endif %}>🔍 Investigación</a>
+  <a href="/content" {% if active=='content' %}class="active"{% endif %}>🎬 Contenido</a>
+  <a href="/publishing" {% if active=='publishing' %}class="active"{% endif %}>📅 Publicación</a>
+  <a href="/engagement" {% if active=='engagement' %}class="active"{% endif %}>💬 Engagement</a>
+  <hr style="border-color:#2d2a4a;margin:.5rem 0">
+  <a href="/docs" target="_blank">📖 API Docs</a>
+</nav>
+<div class="main">
+  {% block content %}{% endblock %}
+</div>
+<div id="toast"></div>
+<script>
+function toast(msg,type='success'){
+  const t=document.getElementById('toast');
+  t.textContent=msg;
+  t.style.background=type==='error'?'#7f1d1d':'#7c3aed';
+  t.style.display='block';
+  setTimeout(()=>t.style.display='none',3500);
+}
+async function api(url,method='GET',body=null){
+  const opts={method,headers:{'Content-Type':'application/json'}};
+  if(body)opts.body=JSON.stringify(body);
+  const r=await fetch(url,opts);
+  const data=await r.json();
+  if(!r.ok)throw new Error(data.detail||'Error');
+  return data;
+}
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

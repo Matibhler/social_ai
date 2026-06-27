@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}Investigación — Social AI{% endblock %}
+{% block content %}
+<h1>🔍 Investigación de Competencia</h1>
+
+<div class="card">
+  <h2>➕ Agregar cuenta competidora</h2>
+  <div class="grid3" style="gap:1rem">
+    <div>
+      <label style="font-size:.85rem;color:#888;display:block;margin-bottom:.3rem">Usuario</label>
+      <input type="text" id="username" placeholder="@cuenta (sin @)" />
+    </div>
+    <div>
+      <label style="font-size:.85rem;color:#888;display:block;margin-bottom:.3rem">Plataforma</label>
+      <select id="platform">
+        <option value="instagram">Instagram</option>
+        <option value="tiktok">TikTok</option>
+      </select>
+    </div>
+    <div>
+      <label style="font-size:.85rem;color:#888;display:block;margin-bottom:.3rem">Número de posts</label>
+      <input type="number" id="max_posts" value="20" min="5" max="50" />
+    </div>
+  </div>
+  <br>
+  <button class="btn btn-primary" onclick="startScrape()">🔍 Analizar cuenta</button>
+</div>
+
+<div class="card">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+    <h2 style="margin:0">📊 Cuentas analizadas</h2>
+    <button class="btn btn-secondary" onclick="getOpportunities()">💡 Ver oportunidades globales</button>
+  </div>
+  {% if accounts %}
+  <table>
+    <tr><th>Usuario</th><th>Plataforma</th><th>Seguidores</th><th>Nicho</th><th>Último análisis</th><th>Acciones</th></tr>
+    {% for a in accounts %}
+    <tr>
+      <td><strong>@{{ a.username }}</strong></td>
+      <td><span class="badge badge-blue">{{ a.platform }}</span></td>
+      <td>{{ '{:,}'.format(a.followers or 0) }}</td>
+      <td>{{ a.niche or '—' }}</td>
+      <td>{{ a.last_analyzed.strftime('%Y-%m-%d') if a.last_analyzed else '—' }}</td>
+      <td style="display:flex;gap:.4rem">
+        <button class="btn btn-secondary" style="padding:.2rem .6rem;font-size:.8rem"
+          onclick="analyzeAccount({{ a.id }})">🤖 Analizar</button>
+        <a class="btn btn-primary" style="padding:.2rem .6rem;font-size:.8rem"
+          href="/api/research/report/{{ a.id }}" target="_blank">📄 Reporte</a>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p style="color:#888">No hay cuentas agregadas aún.</p>
+  {% endif %}
+</div>
+
+<div class="card" id="opportunities-card" style="display:none">
+  <h2>🚀 Oportunidades de contenido detectadas</h2>
+  <div id="opportunities-list"></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+async function startScrape(){
+  const username=document.getElementById('username').value.trim().replace('@','');
+  if(!username){toast('Ingresa un usuario','error');return;}
+  toast(`Analizando @${username}... puede tomar 1-2 minutos`);
+  try{
+    await api('/api/research/scrape','POST',{
+      username,
+      platform:document.getElementById('platform').value,
+      max_posts:parseInt(document.getElementById('max_posts').value)
+    });
+    toast(`Scraping iniciado para @${username}`);
+    setTimeout(()=>location.reload(),3000);
+  }catch(e){toast(e.message,'error');}
+}
+async function analyzeAccount(id){
+  toast('Analizando con IA...');
+  await api(`/api/research/analyze/${id}`,'POST');
+  toast('Análisis completado. Actualiza la página para ver el reporte.');
+}
+async function getOpportunities(){
+  toast('Buscando oportunidades...');
+  try{
+    const d=await api('/api/research/opportunities');
+    const card=document.getElementById('opportunities-card');
+    const list=document.getElementById('opportunities-list');
+    list.innerHTML=d.opportunities.map((o,i)=>
+      `<div style="padding:.7rem;background:#0f0f1a;border-radius:8px;margin:.4rem 0">
+        <strong>${i+1}.</strong> ${o}
+        <button class="btn btn-primary" style="padding:.2rem .6rem;font-size:.75rem;float:right"
+          onclick="createFromOpp('${o.replace(/'/g,"\\'")}')">Crear contenido</button>
+       </div>`
+    ).join('');
+    card.style.display='block';
+  }catch(e){toast(e.message,'error');}
+}
+async function createFromOpp(opportunity){
+  await api('/api/content/generate-script','POST',{
+    topic:opportunity,format:'tutorial',platform:'instagram',duration:45
+  });
+  toast('Guión creado — ve a Contenido');
+  setTimeout(()=>window.location.href='/content',1500);
+}
+</script>
+{% endblock %}

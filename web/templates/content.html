@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block title %}Contenido — Social AI{% endblock %}
+{% block content %}
+<h1>🎬 Gestión de Contenido</h1>
+
+<div class="card">
+  <h2>✍️ Generar nuevo guión</h2>
+  <div class="grid2" style="gap:1rem">
+    <div>
+      <label style="font-size:.85rem;color:#888;display:block;margin-bottom:.3rem">Tema</label>
+      <input type="text" id="topic" placeholder="Ej: 5 errores al invertir en bolsa" />
+    </div>
+    <div>
+      <label style="font-size:.85rem;color:#888;display:block;margin-bottom:.3rem">Formato</label>
+      <select id="format">
+        <option value="tutorial">Tutorial</option>
+        <option value="list">Lista (Top 5...)</option>
+        <option value="story">Historia</option>
+        <option value="hook">Solo hook viral</option>
+      </select>
+    </div>
+    <div>
+      <label style="font-size:.85rem;color:#888;display:block;margin-bottom:.3rem">Plataforma</label>
+      <select id="platform">
+        <option value="instagram">Instagram Reels</option>
+        <option value="youtube">YouTube Shorts</option>
+        <option value="tiktok">TikTok</option>
+      </select>
+    </div>
+    <div>
+      <label style="font-size:.85rem;color:#888;display:block;margin-bottom:.3rem">Duración objetivo (seg)</label>
+      <input type="number" id="duration" value="45" min="15" max="60" />
+    </div>
+  </div>
+  <br>
+  <button class="btn btn-primary" onclick="generateScript()">🤖 Generar con IA</button>
+</div>
+
+<div class="card" id="script-preview" style="display:none">
+  <h2>📝 Vista previa del guión</h2>
+  <div id="script-content" style="background:#0f0f1a;padding:1rem;border-radius:8px;white-space:pre-wrap;line-height:1.6"></div>
+  <br>
+  <div style="display:flex;gap:1rem">
+    <button class="btn btn-primary" id="produce-btn" onclick="produceVideo()">🎬 Producir video</button>
+    <button class="btn btn-secondary" onclick="document.getElementById('script-preview').style.display='none'">✕ Cerrar</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>📚 Biblioteca de contenido</h2>
+  {% if pieces %}
+  <table>
+    <tr><th>ID</th><th>Título</th><th>Formato</th><th>Estado</th><th>Creado</th><th>Acciones</th></tr>
+    {% for p in pieces %}
+    <tr>
+      <td>#{{ p.id }}</td>
+      <td>{{ p.title[:60] }}</td>
+      <td>{{ p.format }}</td>
+      <td>
+        <span class="badge
+          {% if p.status.value == 'published' %}badge-green
+          {% elif p.status.value == 'queued' %}badge-yellow
+          {% elif p.status.value == 'failed' %}badge-red
+          {% else %}badge-blue{% endif %}">{{ p.status.value }}</span>
+      </td>
+      <td>{{ p.created_at.strftime('%Y-%m-%d') }}</td>
+      <td style="display:flex;gap:.4rem">
+        <button class="btn btn-secondary" style="padding:.2rem .6rem;font-size:.8rem"
+          onclick="viewScript({{ p.id }})">Ver</button>
+        {% if p.status.value == 'draft' %}
+        <button class="btn btn-primary" style="padding:.2rem .6rem;font-size:.8rem"
+          onclick="produceVideoById({{ p.id }})">🎬</button>
+        {% endif %}
+        {% if p.status.value == 'queued' and p.video_path %}
+        <button class="btn btn-secondary" style="padding:.2rem .6rem;font-size:.8rem"
+          onclick="scheduleContent({{ p.id }})">📅</button>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p style="color:#888">No hay contenido aún. Genera tu primer guión.</p>
+  {% endif %}
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+let currentContentId = null;
+
+async function generateScript(){
+  const topic=document.getElementById('topic').value.trim();
+  if(!topic){toast('Ingresa un tema','error');return;}
+  toast('Generando guión con IA...');
+  try{
+    const d=await api('/api/content/generate-script','POST',{
+      topic,
+      format:document.getElementById('format').value,
+      platform:document.getElementById('platform').value,
+      duration:parseInt(document.getElementById('duration').value)
+    });
+    currentContentId=d.id;
+    document.getElementById('script-content').textContent=d.script;
+    document.getElementById('script-preview').style.display='block';
+    toast(`Guión listo: "${d.title}"`);
+  }catch(e){toast(e.message,'error');}
+}
+
+async function produceVideo(){
+  if(!currentContentId)return;
+  await produceVideoById(currentContentId);
+}
+
+async function produceVideoById(id){
+  toast('Iniciando producción de video...');
+  try{
+    await api(`/api/content/${id}/produce`,'POST');
+    toast('Video en producción (puede tomar unos minutos)');
+  }catch(e){toast(e.message,'error');}
+}
+
+async function viewScript(id){
+  try{
+    const d=await api(`/api/content/${id}`);
+    currentContentId=id;
+    document.getElementById('script-content').textContent=d.script;
+    document.getElementById('script-preview').style.display='block';
+  }catch(e){toast(e.message,'error');}
+}
+
+async function scheduleContent(id){
+  const dt=prompt('Fecha y hora de publicación (YYYY-MM-DDTHH:MM):');
+  if(!dt)return;
+  try{
+    await api('/api/publishing/schedule','POST',{
+      content_id:id,
+      platform:'instagram',
+      scheduled_at:dt+':00',
+      hashtags:[]
+    });
+    toast('Contenido programado!');
+  }catch(e){toast(e.message,'error');}
+}
+</script>
+{% endblock %}
