@@ -17,10 +17,10 @@ H = settings.VIDEO_HEIGHT   # 1920
 FPS = settings.VIDEO_FPS    # 30
 
 
-def run_ffmpeg(*args: str, check: bool = True) -> subprocess.CompletedProcess:
+def run_ffmpeg(*args: str, check: bool = True, cwd: str = None) -> subprocess.CompletedProcess:
     cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "warning", *args]
     log.debug("FFmpeg: %s", " ".join(cmd))
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
     if check and result.returncode != 0:
         log.error("FFmpeg stderr: %s", result.stderr)
         raise RuntimeError(f"FFmpeg falló (código {result.returncode})")
@@ -85,11 +85,13 @@ class VideoEditor:
         self, video_path: Path, subtitle_path: Path, output: Path
     ) -> Path:
         """Quema subtítulos .srt o .ass en el video."""
+        # Use just the filename (no path) to avoid Windows drive-letter colon issues in FFmpeg filters
         ext = subtitle_path.suffix.lower()
+        sub_name = subtitle_path.name
         if ext == ".ass":
-            sub_filter = f"ass={subtitle_path.resolve()}"
+            sub_filter = f"ass={sub_name}"
         else:
-            sub_filter = f"subtitles={subtitle_path.resolve()}"
+            sub_filter = f"subtitles={sub_name}"
 
         run_ffmpeg(
             "-i", str(video_path),
@@ -97,6 +99,7 @@ class VideoEditor:
             "-c:v", "libx264", "-preset", "fast", "-crf", "23",
             "-c:a", "copy",
             str(output),
+            cwd=str(subtitle_path.parent),
         )
         return output
 
