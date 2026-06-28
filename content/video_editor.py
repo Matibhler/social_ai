@@ -18,6 +18,11 @@ FPS = settings.VIDEO_FPS    # 30
 
 
 def run_ffmpeg(*args: str, check: bool = True, cwd: str = None) -> subprocess.CompletedProcess:
+    args = list(args)
+    # Insert -pix_fmt yuv420p just before the output filename (last arg) so FFmpeg
+    # treats it as an output option — placing it before -i would make it an input option
+    if "libx264" in args and "-pix_fmt" not in args:
+        args = args[:-1] + ["-pix_fmt", "yuv420p"] + [args[-1]]
     cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "warning", *args]
     log.debug("FFmpeg: %s", " ".join(cmd))
     result = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
@@ -134,7 +139,7 @@ class VideoEditor:
         video_path: Path,
         music_path: Path,
         output: Path,
-        music_volume: float = 0.15,
+        music_volume: float = 0.35,
     ) -> Path:
         """Mezcla música de fondo con el audio de voz en off."""
         run_ffmpeg(
@@ -177,19 +182,48 @@ class VideoEditor:
         tmp = output_path.parent / "tmp"
         tmp.mkdir(exist_ok=True)
 
+        import subprocess as _sp
+
         log.info("Iniciando pipeline de video: %s", output_path.name)
 
-        # 1. Preparar y concatenar clips
+        def _get_duration(path: Path) -> float:
+            r = _sp.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+                capture_output=True, text=True,
+            )
+            try:
+                return float(r.stdout.strip())
+            except (ValueError, AttributeError):
+                return 3.0
+
+        # 1. Preparar clips con cortes rápidos (3 segundos cada uno)
         prepared = []
         for i, clip in enumerate(clips):
             out = tmp / f"clip_{i:03d}.mp4"
-            self.prepare_clip(clip, duration=60, output=out)
+            self.prepare_clip(clip, duration=3, output=out)
             prepared.append(out)
 
-        concat_out = tmp / "concat.mp4"
+        # 2. Añadir fade transition entre clips (0.3s crossfade)
+        fade_dur = 0.3
         if len(prepared) > 1:
-            self.concat_clips(prepared, concat_out)
+            current = prepared[0]
+            for i, next_clip in enumerate(prepared[1:], 1):
+                faded = tmp / f"faded_{i:03d}.mp4"
+                dur_a = _get_duration(current)
+                offset = max(0.01, dur_a - fade_dur)
+                run_ffmpeg(
+                    "-i", str(current), "-i", str(next_clip),
+                    "-filter_complex",
+                    f"[0:v][1:v]xfade=transition=fade:duration={fade_dur}:offset={offset}[v]",
+                    "-map", "[v]",
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                    str(faded),
+                )
+                current = faded
+            concat_out = current
         else:
+            concat_out = tmp / "concat.mp4"
             prepared[0].rename(concat_out)
 
         # 2. Agregar audio (voz en off)
@@ -203,16 +237,12 @@ class VideoEditor:
         else:
             with_subs = with_audio
 
-        # 4. Texto hook
-        with_text = tmp / "with_text.mp4"
-        self.add_text_overlay(with_subs, hook_text[:50], with_text, y_pos="100")
-
-        # 5. Música de fondo (opcional)
+        # 4. Música de fondo (opcional)
         if music_path and music_path.exists():
             final_tmp = tmp / "with_music.mp4"
-            self.add_background_music(with_text, music_path, final_tmp)
+            self.add_background_music(with_subs, music_path, final_tmp)
         else:
-            final_tmp = with_text
+            final_tmp = with_subs
 
         # 6. Mover a destino final
         import shutil

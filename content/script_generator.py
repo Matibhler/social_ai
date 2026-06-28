@@ -102,15 +102,21 @@ def generate_batch(topics: list[str], platform: Platform = Platform.INSTAGRAM) -
 
 def suggest_topics(niche: str, count: int = 10) -> list[str]:
     """Sugiere temas virales para un nicho dado."""
-    prompt = f"""
-Sugiere {count} temas de video viral para el nicho: "{niche}"
-
-Criterios:
-- Alta demanda y bajo contenido (oportunidades)
-- Útiles, entretenidos o inspiradores
-- Aptos para video de 30-60 segundos
-
-Devuelve JSON: {{"topics": ["tema1", "tema2", ...]}}
-"""
-    result = llm.json_generate(prompt, system=SCRIPT_SYSTEM)
-    return result.get("topics", [])
+    prompt = (
+        f'Sugiere exactamente {count} temas de video viral para el nicho: "{niche}". '
+        f'Responde SOLO con JSON válido: {{"topics": ["tema 1", "tema 2", ..., "tema {count}"]}}'
+    )
+    for attempt in range(3):
+        try:
+            result = llm.json_generate(
+                prompt,
+                system="Eres un experto en marketing de contenidos. Responde ÚNICAMENTE con JSON válido, sin texto extra.",
+            )
+            topics = result.get("topics", [])
+            if topics:
+                log.info("Temas sugeridos: %d (intento %d)", len(topics), attempt + 1)
+                return topics
+        except Exception as e:
+            log.warning("Intento %d fallido en suggest_topics: %s", attempt + 1, e)
+    log.error("suggest_topics falló después de 3 intentos")
+    return []

@@ -53,13 +53,18 @@ def to_ass(segments: list[dict], output_path: Path, style: str = "viral") -> Pat
     texto grande, centrado, con sombra y color llamativo.
     """
     styles = {
+        # Bold yellow text, thick black outline, no box — classic TikTok/Reels look
         "viral": (
-            "Style: Default,Arial Black,48,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,"
-            "1,0,0,0,100,100,0,0,1,3,2,2,10,10,30,1"
+            "Style: Default,Arial Black,72,&H0000FFFF,&H000000FF,&H00000000,&H00000000,"
+            "1,0,0,0,100,100,0,0,1,4,0,2,20,20,80,1"
         ),
         "minimal": (
-            "Style: Default,Arial,36,&H00FFFFFF,&H000000FF,&H00000000,&H60000000,"
-            "0,0,0,0,100,100,0,0,1,2,1,2,10,10,20,1"
+            "Style: Default,Arial,40,&H00FFFFFF,&H000000FF,&H00000000,&H60000000,"
+            "0,0,0,0,100,100,0,0,1,2,0,2,10,10,40,1"
+        ),
+        "cinematic": (
+            "Style: Default,Arial Black,64,&H00FFFFFF,&H000000FF,&H00000000,&H70000000,"
+            "1,0,0,0,100,100,0,0,1,4,0,2,30,30,80,1"
         ),
     }
     chosen_style = styles.get(style, styles["viral"])

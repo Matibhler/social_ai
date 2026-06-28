@@ -159,18 +159,119 @@ class MediaDownloader:
 
         return dest
 
+    def search_youtube_videos(self, query: str, max_results: int = 3, used_ids: set = None) -> list[dict]:
+        try:
+            import yt_dlp
+        except ImportError:
+            log.warning("yt-dlp no instalado")
+            return []
+
+        used_ids = used_ids or set()
+        results = []
+        ydl_opts = {"quiet": True, "no_warnings": True, "extract_flat": True}
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(f"ytsearch{max_results * 3}:{query}", download=False)
+                for entry in (info.get("entries") or []):
+                    if not entry:
+                        continue
+                    vid_id = entry.get("id", "")
+                    if not vid_id or vid_id in used_ids:
+                        continue
+                    results.append({
+                        "source": "youtube",
+                        "source_id": vid_id,
+                        "url": f"https://www.youtube.com/watch?v={vid_id}",
+                        "asset_type": "video",
+                        "duration": entry.get("duration"),
+                        "license": "youtube",
+                    })
+                    if len(results) >= max_results:
+                        break
+        except Exception as e:
+            log.error("YouTube search error: %s", e)
+        return results
+
+    def download_youtube_clip(self, video_info: dict, content_id: int = None) -> "Optional[Path]":
+        try:
+            import yt_dlp
+        except ImportError:
+            return None
+
+        vid_id = video_info["source_id"]
+        dest = settings.MEDIA_DIR / f"yt_{vid_id}.mp4"
+        if dest.exists():
+            log.debug("YouTube clip ya en caché: %s", dest)
+            if content_id:
+                self._save_asset(video_info, dest, content_id)
+            return dest
+
+        log.info("Descargando clip YouTube: %s", video_info["url"])
+        outtmpl = str(settings.MEDIA_DIR / f"yt_{vid_id}.%(ext)s")
+        ydl_opts = {
+            "format": "bestvideo[height<=720][ext=mp4]/bestvideo[height<=720]/best[height<=720]",
+            "outtmpl": outtmpl,
+            "quiet": True,
+            "no_warnings": True,
+            "merge_output_format": "mp4",
+        }
+        try:
+            from yt_dlp.utils import download_range_func
+            ydl_opts["download_ranges"] = download_range_func(None, [(0, 30)])
+            ydl_opts["force_keyframes_at_cuts"] = True
+        except ImportError:
+            pass
+
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([video_info["url"]])
+            # find downloaded file (yt-dlp picks the extension)
+            for ext in (".mp4", ".webm", ".mkv", ".mov"):
+                candidate = settings.MEDIA_DIR / f"yt_{vid_id}{ext}"
+                if candidate.exists():
+                    if ext != ".mp4":
+                        candidate.rename(dest)
+                    if content_id:
+                        self._save_asset(video_info, dest, content_id)
+                    return dest
+        except Exception as e:
+            log.error("YouTube download error: %s", e)
+        return None
+
+    def _get_used_source_ids(self) -> set:
+        try:
+            with get_session() as db:
+                from sqlalchemy import select as _select
+                rows = db.execute(_select(MediaAsset.source_id)).scalars().all()
+                return set(rows)
+        except Exception:
+            return set()
+
     def download_batch(
         self, queries: list[str], content_id: int, max_per_query: int = 2
     ) -> list[Path]:
+        used_ids = self._get_used_source_ids()
         paths = []
         for query in queries:
-            results = self.search_pexels_videos(query, per_page=max_per_query)
+            # Try Pexels first, filter already-used clips
+            results = [r for r in self.search_pexels_videos(query, per_page=max_per_query + 3)
+                       if r["source_id"] not in used_ids]
+            # Fall back to Pixabay
             if not results:
-                results = self.search_pixabay_videos(query, per_page=max_per_query)
+                results = [r for r in self.search_pixabay_videos(query, per_page=max_per_query + 3)
+                           if r["source_id"] not in used_ids]
+            # Fall back to YouTube
+            if not results:
+                results = self.search_youtube_videos(query, max_results=max_per_query, used_ids=used_ids)
+
             for item in results[:max_per_query]:
-                p = self.download(item, content_id=content_id)
+                if item["source"] == "youtube":
+                    p = self.download_youtube_clip(item, content_id=content_id)
+                else:
+                    p = self.download(item, content_id=content_id)
                 if p:
                     paths.append(p)
+                    used_ids.add(item["source_id"])
         return paths
 
     def _save_asset(self, info: dict, local_path: Path, content_id: int):

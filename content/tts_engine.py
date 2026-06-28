@@ -37,7 +37,7 @@ class TTSEngine:
         mp3_path = output_path.with_suffix(".mp3")
 
         async def _run():
-            communicate = edge_tts.Communicate(text, self.voice)
+            communicate = edge_tts.Communicate(text, self.voice, rate="+25%")
             await communicate.save(str(mp3_path))
 
         asyncio.run(_run())

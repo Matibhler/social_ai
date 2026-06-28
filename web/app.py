@@ -26,6 +26,12 @@ from publishing.scheduler import scheduler
 
 log = get_logger(__name__)
 
+# In-memory progress tracker: {content_id: {"pct": 0-100, "message": "..."}}
+_video_progress: dict[int, dict] = {}
+
+def _set_progress(content_id: int, pct: int, message: str):
+    _video_progress[content_id] = {"pct": pct, "message": message}
+
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
 STATIC_DIR.mkdir(exist_ok=True)
@@ -158,7 +164,11 @@ async def generate_script(req: ScriptRequest):
 @app.post("/api/content/suggest-topics")
 async def suggest_topics():
     from content.script_generator import suggest_topics as _suggest
-    topics = await asyncio.to_thread(_suggest, settings.NICHE, 10)
+    try:
+        topics = await asyncio.to_thread(_suggest, settings.NICHE, 10)
+    except Exception as e:
+        log.error("Error sugiriendo temas: %s", e)
+        return {"topics": []}
     return {"topics": topics}
 
 
@@ -178,6 +188,34 @@ async def get_content(content_id: int, db: Session = Depends(get_db)):
         "status": piece.status, "video_path": piece.video_path,
         "hashtags": piece.hashtags,
     }
+
+
+@app.delete("/api/content/{content_id}")
+async def delete_content(content_id: int, db: Session = Depends(get_db)):
+    piece = db.get(ContentPiece, content_id)
+    if not piece:
+        raise HTTPException(404, "Contenido no encontrado")
+    import shutil
+    export_dir = settings.EXPORTS_DIR / f"content_{content_id}"
+    if export_dir.exists():
+        shutil.rmtree(export_dir, ignore_errors=True)
+    db.delete(piece)
+    db.commit()
+    return {"ok": True}
+
+
+@app.get("/api/content/{content_id}/progress")
+async def get_video_progress(content_id: int, db: Session = Depends(get_db)):
+    prog = _video_progress.get(content_id)
+    if prog:
+        return prog
+    # If no active progress, check DB status
+    piece = db.get(ContentPiece, content_id)
+    if piece and piece.status == ContentStatus.QUEUED:
+        return {"pct": 100, "message": "Video listo"}
+    if piece and piece.status.value == "failed":
+        return {"pct": -1, "message": "Error al producir video"}
+    return {"pct": 0, "message": "Esperando..."}
 
 
 # ── Publishing ────────────────────────────────────────────────────────────────
@@ -269,14 +307,14 @@ def _analyze_task(account_id: int):
 
 
 def _produce_video_task(content_id: int):
-    """Pipeline completo de producción de video."""
+    """Pipeline cinematografico completo de produccion de video."""
     from core.database import get_session
     from core.models import ContentPiece
     from content.media_downloader import MediaDownloader
     from content.tts_engine import TTSEngine
     from content.subtitle_generator import transcribe_audio, to_ass
     from content.video_editor import VideoEditor
-    import re
+    import random, re
 
     with get_session() as db:
         piece = db.get(ContentPiece, content_id)
@@ -287,24 +325,54 @@ def _produce_video_task(content_id: int):
         base.mkdir(parents=True, exist_ok=True)
 
         try:
+            _set_progress(content_id, 5, "Generando narración con TTS...")
+
             # 1. TTS
             audio_path = base / "narration.mp3"
             tts = TTSEngine()
             tts.synthesize(piece.script, audio_path)
             piece.audio_path = str(audio_path)
+            _set_progress(content_id, 20, "Transcribiendo audio con Whisper...")
 
-            # 2. Subtítulos
+            # 2. Subtitulos
             segments = transcribe_audio(audio_path)
             sub_path = base / "subtitles.ass"
             to_ass(segments, sub_path, style="viral")
             piece.subtitle_path = str(sub_path)
+            _set_progress(content_id, 35, "Buscando clips relevantes...")
 
-            # 3. Descargar media
-            keywords = re.findall(r'\b\w{5,}\b', piece.title)[:3]
+            # 3. Descargar clips B-roll con keywords visuales en inglés generadas por LLM
+            from core.llm import llm as _llm
+            try:
+                kw_result = _llm.json_generate(
+                    f'Give me 5 short English visual search terms for a stock video site (Pexels) '
+                    f'that match this video topic: "{piece.title}". '
+                    f'Terms must be concrete and visual (things you can film), not abstract. '
+                    f'Respond only with JSON: {{"keywords": ["term1", "term2", "term3", "term4", "term5"]}}',
+                    system="You are a video producer. Respond ONLY with valid JSON.",
+                )
+                keywords = kw_result.get("keywords", [])[:5]
+            except Exception:
+                keywords = []
+            if not keywords:
+                keywords = re.findall(r'\b\w{5,}\b', piece.title)[:3]
+            log.info("Keywords B-roll: %s", keywords)
             downloader = MediaDownloader()
             clips = downloader.download_batch(keywords, content_id, max_per_query=2)
+            _set_progress(content_id, 55, "Renderizando video...")
 
-            # 4. Renderizar video
+            # 4. Musica de fondo desde data/music/ (opcional)
+            music_path = None
+            music_dir = settings.DATA_DIR / "music"
+            if music_dir.exists():
+                music_files = [
+                    f for f in music_dir.iterdir()
+                    if f.suffix.lower() in (".mp3", ".wav", ".m4a", ".ogg")
+                ]
+                if music_files:
+                    music_path = random.choice(music_files)
+
+            # 5. Renderizar con pipeline simple
             video_path = base / "final.mp4"
             VideoEditor().full_pipeline(
                 clips=clips,
@@ -312,20 +380,24 @@ def _produce_video_task(content_id: int):
                 subtitle_path=sub_path,
                 hook_text=piece.hook or piece.title,
                 output_path=video_path,
+                music_path=music_path,
             )
             piece.video_path = str(video_path)
+            _set_progress(content_id, 95, "Generando miniatura...")
 
-            # 5. Thumbnail
+            # 8. Thumbnail
             thumb_path = base / "thumbnail.jpg"
             VideoEditor().extract_thumbnail(video_path, thumb_path)
             piece.thumbnail_path = str(thumb_path)
 
             piece.status = ContentStatus.QUEUED
             db.commit()
+            _video_progress.pop(content_id, None)
             log.info("Video producido: %s", video_path)
 
         except Exception as e:
             log.error("Error produciendo video %d: %s", content_id, e)
+            _set_progress(content_id, -1, f"Error: {e}")
             piece.status = ContentStatus.FAILED
             db.commit()
 

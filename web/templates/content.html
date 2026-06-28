@@ -33,7 +33,11 @@
     </div>
   </div>
   <br>
-  <button class="btn btn-primary" onclick="generateScript()">🤖 Generar con IA</button>
+  <div style="display:flex;gap:.8rem;flex-wrap:wrap;align-items:center">
+    <button class="btn btn-primary" onclick="generateScript()">🤖 Generar con IA</button>
+    <button class="btn btn-secondary" onclick="suggestTopics()">💡 Sugerir temas</button>
+  </div>
+  <div id="topics-list" style="display:none;margin-top:1rem;flex-wrap:wrap;gap:.5rem"></div>
 </div>
 
 <div class="card" id="script-preview" style="display:none">
@@ -44,6 +48,17 @@
     <button class="btn btn-primary" id="produce-btn" onclick="produceVideo()">🎬 Producir video</button>
     <button class="btn btn-secondary" onclick="document.getElementById('script-preview').style.display='none'">✕ Cerrar</button>
   </div>
+</div>
+
+<div class="card" id="progress-card" style="display:none">
+  <h2>⚙️ Produciendo video...</h2>
+  <p id="progress-label" style="color:#aaa;margin-bottom:.6rem">Iniciando...</p>
+  <div style="background:#1a1a2e;border-radius:8px;overflow:hidden;height:22px;width:100%">
+    <div id="progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#6c63ff,#a78bfa);border-radius:8px;transition:width .4s ease;display:flex;align-items:center;justify-content:flex-end;padding-right:8px">
+      <span id="progress-pct" style="font-size:.75rem;font-weight:bold;color:white"></span>
+    </div>
+  </div>
+  <p id="progress-eta" style="color:#666;font-size:.8rem;margin-top:.4rem"></p>
 </div>
 
 <div class="card">
@@ -75,6 +90,8 @@
         <button class="btn btn-secondary" style="padding:.2rem .6rem;font-size:.8rem"
           onclick="scheduleContent({{ p.id }})">📅</button>
         {% endif %}
+        <button class="btn" style="padding:.2rem .6rem;font-size:.8rem;background:#7f1d1d;color:#fca5a5;border:none;border-radius:6px;cursor:pointer"
+          onclick="deleteContent({{ p.id }}, '{{ p.title[:30]|replace("'", "") }}')">🗑</button>
       </td>
     </tr>
     {% endfor %}
@@ -88,6 +105,8 @@
 {% block scripts %}
 <script>
 let currentContentId = null;
+let _pollInterval = null;
+let _progressStart = null;
 
 async function generateScript(){
   const topic=document.getElementById('topic').value.trim();
@@ -116,8 +135,81 @@ async function produceVideoById(id){
   toast('Iniciando producción de video...');
   try{
     await api(`/api/content/${id}/produce`,'POST');
-    toast('Video en producción (puede tomar unos minutos)');
+    startProgressPolling(id);
   }catch(e){toast(e.message,'error');}
+}
+
+function startProgressPolling(id){
+  _progressStart = Date.now();
+  const card = document.getElementById('progress-card');
+  card.style.display = 'block';
+  card.scrollIntoView({behavior:'smooth', block:'nearest'});
+  setProgress(0, 'Iniciando...');
+
+  if(_pollInterval) clearInterval(_pollInterval);
+  _pollInterval = setInterval(async () => {
+    try{
+      const d = await api(`/api/content/${id}/progress`);
+      const pct = d.pct;
+      const msg = d.message;
+
+      if(pct === -1){
+        setProgress(100, '');
+        document.getElementById('progress-bar').style.background = '#ef4444';
+        document.getElementById('progress-label').textContent = '❌ ' + msg;
+        clearInterval(_pollInterval);
+        return;
+      }
+
+      setProgress(pct, msg);
+
+      if(pct >= 100){
+        clearInterval(_pollInterval);
+        document.getElementById('progress-label').textContent = '✅ Video listo';
+        document.getElementById('progress-eta').textContent = 'Recarga la página para verlo en la biblioteca';
+        toast('Video producido con éxito!');
+      } else {
+        const elapsed = Math.round((Date.now() - _progressStart) / 1000);
+        const mins = Math.floor(elapsed/60);
+        const secs = elapsed % 60;
+        document.getElementById('progress-eta').textContent =
+          `Tiempo transcurrido: ${mins > 0 ? mins + 'm ' : ''}${secs}s`;
+      }
+    }catch(e){}
+  }, 2000);
+}
+
+function setProgress(pct, msg){
+  const bar = document.getElementById('progress-bar');
+  const label = document.getElementById('progress-label');
+  const pctEl = document.getElementById('progress-pct');
+  bar.style.width = Math.max(pct, 2) + '%';
+  pctEl.textContent = pct > 5 ? pct + '%' : '';
+  if(msg) label.textContent = msg;
+}
+
+async function suggestTopics(){
+  toast('Generando ideas con IA...');
+  const box = document.getElementById('topics-list');
+  box.innerHTML = '<span style="color:#888">Pensando...</span>';
+  box.style.display = 'flex';
+  try{
+    const d = await api('/api/content/suggest-topics', 'POST');
+    box.innerHTML = '';
+    (d.topics || []).forEach(t => {
+      const btn = document.createElement('button');
+      btn.className = 'btn btn-secondary';
+      btn.style.cssText = 'font-size:.8rem;padding:.3rem .7rem';
+      btn.textContent = t;
+      btn.onclick = () => {
+        document.getElementById('topic').value = t;
+        box.style.display = 'none';
+        toast('Tema seleccionado');
+      };
+      box.appendChild(btn);
+    });
+    if(!d.topics?.length) box.innerHTML = '<span style="color:#888">Sin sugerencias — <a href="#" onclick="suggestTopics();return false;" style="color:#a78bfa">Intentar de nuevo</a></span>';
+  }catch(e){ toast(e.message,'error'); box.style.display='none'; }
 }
 
 async function viewScript(id){
@@ -127,6 +219,15 @@ async function viewScript(id){
     document.getElementById('script-content').textContent=d.script;
     document.getElementById('script-preview').style.display='block';
   }catch(e){toast(e.message,'error');}
+}
+
+async function deleteContent(id, title){
+  if(!confirm(`¿Eliminar "${title}..."? Esto borrará el video y todos los archivos.`)) return;
+  try{
+    await api(`/api/content/${id}`, 'DELETE');
+    toast('Contenido eliminado');
+    setTimeout(() => location.reload(), 800);
+  }catch(e){ toast(e.message, 'error'); }
 }
 
 async function scheduleContent(id){
