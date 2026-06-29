@@ -318,36 +318,55 @@ class VideoEditor:
                 .replace("[", "").replace("]", "").replace("@", "")
         ).strip()
 
-        # Take first 4 sentences to allow a short story
+        # Extract complete sentences — never start or end mid-sentence
         sentences = _re.findall(r'[^.!?]+[.!?]', clean)
-        if sentences:
-            clean = " ".join(sentences[:4]).strip()
-        else:
-            clean = " ".join(clean.split()[:35])
+        if not sentences:
+            sentences = [clean]
 
-        # Word-wrap at 30 chars, max 7 lines
-        words = clean.split()
-        lines, current = [], []
-        for word in words:
-            if len(" ".join(current + [word])) > 30 and current:
-                lines.append(" ".join(current))
-                current = [word]
-                if len(lines) == 7:
-                    break
+        def _wrap(txt, max_chars):
+            wds = txt.split()
+            ls, cur = [], []
+            for w in wds:
+                if len(" ".join(cur + [w])) > max_chars and cur:
+                    ls.append(" ".join(cur))
+                    cur = [w]
+                else:
+                    cur.append(w)
+            if cur:
+                ls.append(" ".join(cur))
+            return ls
+
+        # Auto-size: fit as many complete sentences as possible in the band
+        # Band available: CLIP_Y - 60px margins = 460px
+        BAND = self.CLIP_Y - 60   # 460px
+        font_size = 40
+        line_h = font_size + 12   # 52px
+        max_lines = BAND // line_h  # 8 lines at 40px
+
+        lines = []
+        for sent in sentences:
+            sent_lines = _wrap(sent.strip(), max_chars=36)
+            if len(lines) + len(sent_lines) <= max_lines:
+                lines.extend(sent_lines)
             else:
-                current.append(word)
-        if current and len(lines) < 7:
-            lines.append(" ".join(current))
+                break  # stop before cutting a sentence in half
+
+        # If even the first sentence alone exceeds max_lines, scale font down
+        if not lines:
+            for fsize in (36, 32, 28):
+                lh = fsize + 10
+                ml = BAND // lh
+                lines = _wrap(sentences[0].strip(), max_chars=38)[:ml]
+                font_size, line_h = fsize, lh
+                break
+
         if not lines:
             lines = [""]
-
-        font_size = 40
-        line_h = font_size + 12          # 52px per row
 
         n = len(lines)
         block_h = n * line_h - (line_h - font_size)
         band_center = self.CLIP_Y // 2   # 260px
-        start_y = max(30, band_center - block_h // 2)
+        start_y = max(20, band_center - block_h // 2)
 
         vf_parts = []
         for i, line in enumerate(lines):
