@@ -250,21 +250,33 @@ class MediaDownloader:
     def download_batch(
         self, queries: list[str], content_id: int, max_per_query: int = 2
     ) -> list[Path]:
+        import random as _random
         used_ids = self._get_used_source_ids()
         paths = []
         for query in queries:
-            # Try Pexels first, filter already-used clips
-            results = [r for r in self.search_pexels_videos(query, per_page=max_per_query + 3)
+            # Append cinematic bias to steer away from generic stock footage
+            cinematic_query = f"{query} cinematic atmospheric"
+
+            # Try Pexels first — fetch more results so we can pick randomly
+            results = [r for r in self.search_pexels_videos(cinematic_query, per_page=10)
                        if r["source_id"] not in used_ids]
+            # If cinematic query returns nothing, try raw query
+            if not results:
+                results = [r for r in self.search_pexels_videos(query, per_page=10)
+                           if r["source_id"] not in used_ids]
             # Fall back to Pixabay
             if not results:
-                results = [r for r in self.search_pixabay_videos(query, per_page=max_per_query + 3)
+                results = [r for r in self.search_pixabay_videos(query, per_page=10)
                            if r["source_id"] not in used_ids]
             # Fall back to YouTube
             if not results:
                 results = self.search_youtube_videos(query, max_results=max_per_query, used_ids=used_ids)
 
-            for item in results[:max_per_query]:
+            # Pick randomly from top results to avoid always getting same clip
+            pool = results[:8]
+            _random.shuffle(pool)
+
+            for item in pool[:max_per_query]:
                 if item["source"] == "youtube":
                     p = self.download_youtube_clip(item, content_id=content_id)
                 else:

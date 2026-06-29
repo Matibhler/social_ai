@@ -38,11 +38,18 @@
     <button class="btn btn-secondary" onclick="suggestTopics()">💡 Sugerir temas</button>
   </div>
   <div id="topics-list" style="display:none;margin-top:1rem;flex-wrap:wrap;gap:.5rem"></div>
+
+  <div id="script-loading" style="display:none;margin-top:1rem">
+    <p id="script-loading-label" style="color:#a78bfa;font-size:.9rem;margin-bottom:.5rem">Pensando con IA...</p>
+    <div style="background:#1a1a2e;border-radius:8px;overflow:hidden;height:8px;width:100%">
+      <div id="script-loading-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#6c63ff,#a78bfa);border-radius:8px;transition:width .4s ease"></div>
+    </div>
+  </div>
 </div>
 
 <div class="card" id="script-preview" style="display:none">
-  <h2>📝 Vista previa del guión</h2>
-  <div id="script-content" style="background:#0f0f1a;padding:1rem;border-radius:8px;white-space:pre-wrap;line-height:1.6"></div>
+  <h2>📝 Texto del video</h2>
+  <div id="script-content" style="background:#0f0f1a;padding:1.2rem;border-radius:8px;white-space:pre-wrap;line-height:1.8;font-size:1.1rem;color:#e2e8f0"></div>
   <br>
   <div style="display:flex;gap:1rem">
     <button class="btn btn-primary" id="produce-btn" onclick="produceVideo()">🎬 Producir video</button>
@@ -62,12 +69,22 @@
 </div>
 
 <div class="card">
-  <h2>📚 Biblioteca de contenido</h2>
+  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;margin-bottom:.8rem">
+    <h2 style="margin:0">📚 Biblioteca de contenido</h2>
+    <button id="delete-selected-btn" class="btn" onclick="deleteSelected()"
+      style="display:none;background:#7f1d1d;color:#fca5a5;border:none;padding:.4rem 1rem;border-radius:6px;cursor:pointer;font-size:.9rem">
+      🗑 Eliminar seleccionados (<span id="selected-count">0</span>)
+    </button>
+  </div>
   {% if pieces %}
   <table>
-    <tr><th>ID</th><th>Título</th><th>Formato</th><th>Estado</th><th>Creado</th><th>Acciones</th></tr>
+    <tr>
+      <th style="width:32px"><input type="checkbox" id="select-all" onchange="toggleSelectAll(this)" title="Seleccionar todos"></th>
+      <th>ID</th><th>Título</th><th>Formato</th><th>Estado</th><th>Creado</th><th>Acciones</th>
+    </tr>
     {% for p in pieces %}
     <tr>
+      <td><input type="checkbox" class="row-check" value="{{ p.id }}" onchange="updateDeleteBtn()"></td>
       <td>#{{ p.id }}</td>
       <td>{{ p.title[:60] }}</td>
       <td>{{ p.format }}</td>
@@ -111,7 +128,31 @@ let _progressStart = null;
 async function generateScript(){
   const topic=document.getElementById('topic').value.trim();
   if(!topic){toast('Ingresa un tema','error');return;}
-  toast('Generando guión con IA...');
+
+  const loadingEl = document.getElementById('script-loading');
+  const bar = document.getElementById('script-loading-bar');
+  const label = document.getElementById('script-loading-label');
+  const btn = document.querySelector('button[onclick="generateScript()"]');
+
+  // Show loading bar and disable button
+  loadingEl.style.display = 'block';
+  btn.disabled = true;
+  btn.textContent = '⏳ Generando...';
+  bar.style.width = '0%';
+  label.textContent = 'Conectando con la IA...';
+
+  // Animate bar gradually (simulated — LLM has no real progress)
+  const stages = [
+    {pct: 15, msg: 'Pensando el hook...', delay: 500},
+    {pct: 35, msg: 'Escribiendo el guión...', delay: 2000},
+    {pct: 60, msg: 'Perfeccionando el mensaje...', delay: 4000},
+    {pct: 80, msg: 'Casi listo...', delay: 6000},
+  ];
+  let timers = stages.map(s => setTimeout(() => {
+    bar.style.width = s.pct + '%';
+    label.textContent = s.msg;
+  }, s.delay));
+
   try{
     const d=await api('/api/content/generate-script','POST',{
       topic,
@@ -119,11 +160,25 @@ async function generateScript(){
       platform:document.getElementById('platform').value,
       duration:parseInt(document.getElementById('duration').value)
     });
+    timers.forEach(clearTimeout);
+    bar.style.width = '100%';
+    label.textContent = '✅ Guión generado';
+    setTimeout(() => { loadingEl.style.display = 'none'; }, 800);
+
     currentContentId=d.id;
-    document.getElementById('script-content').textContent=d.script;
+    document.getElementById('script-content').textContent=d.hook||d.script;
     document.getElementById('script-preview').style.display='block';
     toast(`Guión listo: "${d.title}"`);
-  }catch(e){toast(e.message,'error');}
+  }catch(e){
+    timers.forEach(clearTimeout);
+    bar.style.background = '#ef4444';
+    bar.style.width = '100%';
+    label.textContent = '❌ ' + e.message;
+    toast(e.message,'error');
+  }finally{
+    btn.disabled = false;
+    btn.textContent = '🤖 Generar con IA';
+  }
 }
 
 async function produceVideo(){
@@ -216,9 +271,38 @@ async function viewScript(id){
   try{
     const d=await api(`/api/content/${id}`);
     currentContentId=id;
-    document.getElementById('script-content').textContent=d.script;
+    document.getElementById('script-content').textContent=d.hook||d.script;
     document.getElementById('script-preview').style.display='block';
   }catch(e){toast(e.message,'error');}
+}
+
+function toggleSelectAll(cb){
+  document.querySelectorAll('.row-check').forEach(c => c.checked = cb.checked);
+  updateDeleteBtn();
+}
+
+function updateDeleteBtn(){
+  const checked = document.querySelectorAll('.row-check:checked');
+  const btn = document.getElementById('delete-selected-btn');
+  const allCb = document.getElementById('select-all');
+  document.getElementById('selected-count').textContent = checked.length;
+  btn.style.display = checked.length > 0 ? 'inline-block' : 'none';
+  const all = document.querySelectorAll('.row-check');
+  allCb.indeterminate = checked.length > 0 && checked.length < all.length;
+  allCb.checked = all.length > 0 && checked.length === all.length;
+}
+
+async function deleteSelected(){
+  const checked = [...document.querySelectorAll('.row-check:checked')];
+  if(!checked.length) return;
+  if(!confirm(`¿Eliminar ${checked.length} elemento(s)? Esto borrará los videos y archivos.`)) return;
+  const ids = checked.map(c => parseInt(c.value));
+  let ok = 0;
+  for(const id of ids){
+    try{ await api(`/api/content/${id}`, 'DELETE'); ok++; }catch(e){}
+  }
+  toast(`${ok} elemento(s) eliminados`);
+  setTimeout(() => location.reload(), 600);
 }
 
 async function deleteContent(id, title){

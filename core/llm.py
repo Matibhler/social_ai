@@ -62,21 +62,20 @@ class OllamaClient:
             raise
 
     def json_generate(self, prompt: str, system: str = "") -> dict:
-        """Genera y parsea JSON directamente."""
-        full_system = (
-            system + "\nResponde ÚNICAMENTE con JSON válido, sin texto adicional."
-        )
-        text = self.generate(prompt, system=full_system)
-        # Extraer bloque JSON si viene envuelto en ```json
-        if "```" in text:
-            text = text.split("```")[1]
-            if text.startswith("json"):
-                text = text[4:]
-        text = text.strip()
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            return json.loads(self._repair_json(text))
+        """Genera y parsea JSON usando Ollama JSON mode (formato forzado)."""
+        full_system = system + "\nRespond ONLY with valid JSON. No extra text."
+        payload = {
+            "model": self.model,
+            "prompt": prompt,
+            "system": full_system,
+            "stream": False,
+            "format": "json",  # Ollama JSON mode — forces valid JSON output
+            "options": {"temperature": 0.7, "num_predict": 512},
+        }
+        resp = httpx.post(f"{self.base_url}/api/generate", json=payload, timeout=120)
+        resp.raise_for_status()
+        text = resp.json()["response"].strip()
+        return json.loads(text)
 
     @staticmethod
     def _repair_json(text: str) -> str:

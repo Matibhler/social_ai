@@ -151,14 +151,18 @@ async def content_page(request: Request, db: Session = Depends(get_db)):
 @app.post("/api/content/generate-script")
 async def generate_script(req: ScriptRequest):
     from content.script_generator import generate_script as _gen
-    piece = await asyncio.to_thread(
-        _gen,
-        topic=req.topic,
-        format=req.format,
-        platform=Platform(req.platform),
-        target_duration=req.duration,
-    )
-    return {"id": piece.id, "title": piece.title, "script": piece.script}
+    try:
+        piece = await asyncio.to_thread(
+            _gen,
+            topic=req.topic,
+            format=req.format,
+            platform=Platform(req.platform),
+            target_duration=req.duration,
+        )
+    except Exception as e:
+        log.error("Error generando guión: %s", e)
+        raise HTTPException(500, detail=str(e))
+    return {"id": piece.id, "title": piece.title, "script": piece.script, "hook": piece.hook}
 
 
 @app.post("/api/content/suggest-topics")
@@ -185,6 +189,7 @@ async def get_content(content_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404, "Contenido no encontrado")
     return {
         "id": piece.id, "title": piece.title, "script": piece.script,
+        "hook": piece.hook,
         "status": piece.status, "video_path": piece.video_path,
         "hashtags": piece.hashtags,
     }
@@ -325,43 +330,17 @@ def _produce_video_task(content_id: int):
         base.mkdir(parents=True, exist_ok=True)
 
         try:
-            _set_progress(content_id, 5, "Generando narración con TTS...")
+            _set_progress(content_id, 10, "Buscando clips cinematográficos...")
 
-            # 1. TTS
-            audio_path = base / "narration.mp3"
-            tts = TTSEngine()
-            tts.synthesize(piece.script, audio_path)
-            piece.audio_path = str(audio_path)
-            _set_progress(content_id, 20, "Transcribiendo audio con Whisper...")
-
-            # 2. Subtitulos
-            segments = transcribe_audio(audio_path)
-            sub_path = base / "subtitles.ass"
-            to_ass(segments, sub_path, style="viral")
-            piece.subtitle_path = str(sub_path)
-            _set_progress(content_id, 35, "Buscando clips relevantes...")
-
-            # 3. Descargar clips B-roll con keywords visuales en inglés generadas por LLM
-            from core.llm import llm as _llm
-            try:
-                kw_result = _llm.json_generate(
-                    f'Give me 5 short English visual search terms for a stock video site (Pexels) '
-                    f'that match this video topic: "{piece.title}". '
-                    f'Terms must be concrete and visual (things you can film), not abstract. '
-                    f'Respond only with JSON: {{"keywords": ["term1", "term2", "term3", "term4", "term5"]}}',
-                    system="You are a video producer. Respond ONLY with valid JSON.",
-                )
-                keywords = kw_result.get("keywords", [])[:5]
-            except Exception:
-                keywords = []
-            if not keywords:
-                keywords = re.findall(r'\b\w{5,}\b', piece.title)[:3]
+            # 1. Descargar 2-3 clips cinematográficos únicos
+            from content.script_generator import get_clip_keywords
+            keywords = get_clip_keywords(n_clips=3)
             log.info("Keywords B-roll: %s", keywords)
             downloader = MediaDownloader()
-            clips = downloader.download_batch(keywords, content_id, max_per_query=2)
-            _set_progress(content_id, 55, "Renderizando video...")
+            clips = downloader.download_batch(keywords, content_id, max_per_query=1)
+            _set_progress(content_id, 50, "Renderizando video...")
 
-            # 4. Musica de fondo desde data/music/ (opcional)
+            # 2. Música de fondo desde data/music/
             music_path = None
             music_dir = settings.DATA_DIR / "music"
             if music_dir.exists():
@@ -372,13 +351,12 @@ def _produce_video_task(content_id: int):
                 if music_files:
                     music_path = random.choice(music_files)
 
-            # 5. Renderizar con pipeline simple
+            # 3. Pipeline silencioso: clips + párrafo emocional + música (sin voz, sin subtítulos)
             video_path = base / "final.mp4"
-            VideoEditor().full_pipeline(
+            hook_display = (piece.hook or piece.title or "")[:180]
+            VideoEditor().silent_pipeline(
                 clips=clips,
-                audio_path=audio_path,
-                subtitle_path=sub_path,
-                hook_text=piece.hook or piece.title,
+                hook_text=hook_display,
                 output_path=video_path,
                 music_path=music_path,
             )
