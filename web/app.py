@@ -29,6 +29,9 @@ log = get_logger(__name__)
 # In-memory progress tracker: {content_id: {"pct": 0-100, "message": "..."}}
 _video_progress: dict[int, dict] = {}
 
+# Instagram publish status: {content_id: {"status": "...", "message": "...", "post_id": "..."}}
+_instagram_status: dict[int, dict] = {}
+
 def _set_progress(content_id: int, pct: int, message: str):
     _video_progress[content_id] = {"pct": pct, "message": message}
 
@@ -253,7 +256,34 @@ async def schedule_post(req: ScheduleRequest):
     return {"id": sp.id, "scheduled_at": sp.scheduled_at.isoformat()}
 
 
-# ── Engagement ────────────────────────────────────────────────────────────────
+# ── Instagram ─────────────────────────────────────────────────────────────────
+
+@app.get("/api/instagram/config")
+async def instagram_config():
+    configured = bool(settings.INSTAGRAM_ACCESS_TOKEN and settings.INSTAGRAM_ACCOUNT_ID)
+    return {"configured": configured, "account_id": settings.INSTAGRAM_ACCOUNT_ID or None}
+
+
+@app.post("/api/content/{content_id}/publish/instagram")
+async def publish_to_instagram(content_id: int, bg: BackgroundTasks, db: Session = Depends(get_db)):
+    if not settings.INSTAGRAM_ACCESS_TOKEN or not settings.INSTAGRAM_ACCOUNT_ID:
+        raise HTTPException(400, "Instagram no configurado. Agrega INSTAGRAM_ACCESS_TOKEN e INSTAGRAM_ACCOUNT_ID en el archivo .env")
+    piece = db.get(ContentPiece, content_id)
+    if not piece:
+        raise HTTPException(404, "Contenido no encontrado")
+    if not piece.video_path:
+        raise HTTPException(400, "Este contenido no tiene video. Produce el video primero.")
+    _instagram_status[content_id] = {"status": "starting", "message": "Iniciando publicación..."}
+    bg.add_task(_publish_instagram_task, content_id)
+    return {"status": "started"}
+
+
+@app.get("/api/content/{content_id}/instagram-status")
+async def get_instagram_publish_status(content_id: int):
+    return _instagram_status.get(content_id, {"status": "idle"})
+
+
+# ── Engagement ─────────────────────────────────────────────────────────────────
 
 @app.get("/engagement", response_class=HTMLResponse)
 async def engagement_page(request: Request, db: Session = Depends(get_db)):
@@ -391,3 +421,48 @@ def _generate_responses_task():
     from engagement.response_generator import batch_generate_responses
     results = batch_generate_responses(limit=10, auto_approve=False)
     log.info("Respuestas generadas: %d", len(results))
+
+
+def _publish_instagram_task(content_id: int):
+    import json as _json
+    from core.database import get_session
+    from publishing.platforms.instagram import InstagramPlatform
+
+    with get_session() as db:
+        piece = db.get(ContentPiece, content_id)
+        if not piece or not piece.video_path:
+            _instagram_status[content_id] = {"status": "error", "message": "Video no encontrado"}
+            return
+        try:
+            _instagram_status[content_id] = {"status": "uploading", "message": "Subiendo video a Instagram..."}
+            ig = InstagramPlatform()
+
+            # hashtags may be stored as a JSON string — parse it
+            raw_tags = piece.hashtags or []
+            if isinstance(raw_tags, str):
+                try:
+                    raw_tags = _json.loads(raw_tags)
+                except Exception:
+                    raw_tags = []
+
+            post_id = ig.publish_video(
+                video_path=Path(piece.video_path),
+                caption=piece.hook or piece.title or "",
+                hashtags=raw_tags,
+            )
+            piece.status = ContentStatus.PUBLISHED
+            db.commit()
+            _instagram_status[content_id] = {"status": "done", "post_id": post_id, "message": "Publicado en Instagram"}
+            log.info("Publicado en Instagram: post_id=%s content_id=%d", post_id, content_id)
+        except Exception as e:
+            log.error("Error publicando en Instagram content_id=%d: %s", content_id, e)
+            # extract the actual Meta API error message if available
+            msg = str(e)
+            try:
+                import httpx
+                if hasattr(e, 'response') and e.response is not None:
+                    meta_error = e.response.json().get("error", {})
+                    msg = meta_error.get("message", msg)
+            except Exception:
+                pass
+            _instagram_status[content_id] = {"status": "error", "message": msg}

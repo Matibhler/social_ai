@@ -32,6 +32,7 @@ def add_to_queue(
         db.add(sp)
         db.commit()
         db.refresh(sp)
+        db.expunge(sp)
         log.info(
             "Contenido %d encolado para %s el %s",
             content_id,

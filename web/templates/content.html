@@ -3,6 +3,10 @@
 {% block content %}
 <h1>🎬 Gestión de Contenido</h1>
 
+<div class="card" id="ig-status-card" style="display:none;border-left:3px solid #833ab4;padding:.8rem 1.2rem">
+  <span id="ig-status-text" style="font-size:.9rem"></span>
+</div>
+
 <div class="card">
   <h2>✍️ Generar nuevo guión</h2>
   <div class="grid2" style="gap:1rem">
@@ -106,6 +110,11 @@
         {% if p.status.value == 'queued' and p.video_path %}
         <button class="btn btn-secondary" style="padding:.2rem .6rem;font-size:.8rem"
           onclick="scheduleContent({{ p.id }})">📅</button>
+        <button class="btn" id="ig-btn-{{ p.id }}" style="padding:.2rem .6rem;font-size:.8rem;background:#833ab4;color:#fff;border:none;border-radius:6px;cursor:pointer"
+          onclick="publishInstagram({{ p.id }})">📱 IG</button>
+        {% endif %}
+        {% if p.status.value == 'published' %}
+        <span class="badge badge-green" style="font-size:.75rem">✓ Publicado</span>
         {% endif %}
         <button class="btn" style="padding:.2rem .6rem;font-size:.8rem;background:#7f1d1d;color:#fca5a5;border:none;border-radius:6px;cursor:pointer"
           onclick="deleteContent({{ p.id }}, '{{ p.title[:30]|replace("'", "") }}')">🗑</button>
@@ -124,6 +133,22 @@
 let currentContentId = null;
 let _pollInterval = null;
 let _progressStart = null;
+
+(async () => {
+  try{
+    const cfg = await api('/api/instagram/config');
+    const card = document.getElementById('ig-status-card');
+    const text = document.getElementById('ig-status-text');
+    card.style.display = 'block';
+    if(cfg.configured){
+      card.style.borderLeftColor = '#22c55e';
+      text.innerHTML = '✅ <strong>Instagram conectado</strong> — cuenta ' + cfg.account_id + '. Los videos listos pueden publicarse con el botón 📱 IG.';
+    } else {
+      card.style.borderLeftColor = '#f59e0b';
+      text.innerHTML = '⚠️ <strong>Instagram no configurado</strong> — agrega <code>INSTAGRAM_ACCESS_TOKEN</code> e <code>INSTAGRAM_ACCOUNT_ID</code> en tu archivo <code>.env</code> para habilitar la publicación.';
+    }
+  }catch(_){}
+})();
 
 async function generateScript(){
   const topic=document.getElementById('topic').value.trim();
@@ -326,6 +351,45 @@ async function scheduleContent(id){
     });
     toast('Contenido programado!');
   }catch(e){toast(e.message,'error');}
+}
+
+async function publishInstagram(id){
+  const cfg = await api('/api/instagram/config');
+  if(!cfg.configured){
+    toast('Instagram no configurado. Agrega INSTAGRAM_ACCESS_TOKEN e INSTAGRAM_ACCOUNT_ID en el .env','error');
+    return;
+  }
+  if(!confirm('¿Publicar este video en Instagram ahora?')) return;
+
+  const btn = document.getElementById(`ig-btn-${id}`);
+  if(btn){ btn.disabled = true; btn.textContent = '⏳ Publicando...'; }
+  toast('Subiendo video a Instagram...');
+
+  try{
+    await api(`/api/content/${id}/publish/instagram`, 'POST');
+  }catch(e){
+    toast(e.message, 'error');
+    if(btn){ btn.disabled = false; btn.textContent = '📱 IG'; }
+    return;
+  }
+
+  // Poll for status
+  const poll = setInterval(async () => {
+    try{
+      const s = await api(`/api/content/${id}/instagram-status`);
+      if(s.status === 'done'){
+        clearInterval(poll);
+        toast('Publicado en Instagram!');
+        setTimeout(() => location.reload(), 1500);
+      } else if(s.status === 'error'){
+        clearInterval(poll);
+        toast('Error: ' + s.message, 'error');
+        if(btn){ btn.disabled = false; btn.textContent = '📱 IG'; }
+      } else if(s.message){
+        if(btn) btn.textContent = '⏳ ' + s.message.slice(0,20);
+      }
+    }catch(_){}
+  }, 3000);
 }
 </script>
 {% endblock %}
