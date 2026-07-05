@@ -22,14 +22,18 @@
   <h2>📋 Cola de publicaciones</h2>
   {% if scheduled %}
   <table>
-    <tr><th>ID</th><th>Contenido</th><th>Plataforma</th><th>Fecha programada</th><th>Estado</th></tr>
+    <tr><th>ID</th><th>Contenido</th><th>Plataforma</th><th>Fecha programada</th><th>Estado</th><th></th></tr>
     {% for sp in scheduled %}
-    <tr>
+    <tr id="row-{{ sp.id }}">
       <td>#{{ sp.id }}</td>
       <td>#{{ sp.content_id }}</td>
       <td><span class="badge badge-blue">{{ sp.platform }}</span></td>
       <td>{{ sp.scheduled_at.strftime('%Y-%m-%d %H:%M') }}</td>
       <td><span class="badge badge-yellow">{{ sp.status.value }}</span></td>
+      <td>
+        <button class="btn" style="padding:.2rem .6rem;font-size:.8rem;background:#7f1d1d;color:#fca5a5;border:none;border-radius:6px;cursor:pointer"
+          onclick="cancelScheduled({{ sp.id }})">✕ Cancelar</button>
+      </td>
     </tr>
     {% endfor %}
   </table>
@@ -41,7 +45,7 @@
 <div class="card">
   <h2>⚡ Programación automática de semana</h2>
   <p style="color:#888;margin-bottom:1rem">
-    Distribuye automáticamente el contenido en cola durante los mejores horarios de la semana.
+    Distribuye automáticamente todos los videos listos en los mejores horarios de la semana en Instagram.
   </p>
   <div class="grid2" style="gap:1rem;margin-bottom:1rem">
     <div>
@@ -53,18 +57,56 @@
       <input type="text" id="best_hours" value="18,19,20" placeholder="18,19,20" />
     </div>
   </div>
-  <button class="btn btn-primary" onclick="autoSchedule()">🗓️ Auto-programar semana</button>
+  <button class="btn btn-primary" id="auto-schedule-btn" onclick="autoSchedule()">🗓️ Auto-programar semana</button>
+  <div id="schedule-result" style="display:none;margin-top:1rem;padding:.8rem 1rem;border-radius:8px;background:#0f0f1a;font-size:.9rem"></div>
 </div>
 {% endblock %}
 {% block scripts %}
 <script>
+async function cancelScheduled(id){
+  if(!confirm('¿Cancelar esta publicación programada?')) return;
+  try{
+    await api(`/api/publishing/scheduled/${id}`, 'DELETE');
+    document.getElementById(`row-${id}`).remove();
+    toast('Publicación cancelada');
+  }catch(e){ toast(e.message, 'error'); }
+}
+
 async function autoSchedule(){
-  toast('Programando contenido para la semana...');
-  const hours=document.getElementById('best_hours').value.split(',').map(h=>parseInt(h.trim()));
-  const ppd=parseInt(document.getElementById('posts_per_day').value);
-  // Esta funcionalidad llama al endpoint de auto-schedule (extender según necesidades)
-  toast('Programación completada');
-  setTimeout(()=>location.reload(),1500);
+  const btn = document.getElementById('auto-schedule-btn');
+  const result = document.getElementById('schedule-result');
+  const hours = document.getElementById('best_hours').value;
+  const ppd = parseInt(document.getElementById('posts_per_day').value);
+
+  btn.disabled = true;
+  btn.textContent = '⏳ Programando...';
+  result.style.display = 'none';
+
+  try{
+    const params = new URLSearchParams({posts_per_day: ppd, best_hours: hours});
+    const d = await api(`/api/publishing/auto-schedule?${params}`, 'POST');
+    result.style.display = 'block';
+    if(d.scheduled === 0){
+      result.style.color = '#f59e0b';
+      result.innerHTML = '⚠️ ' + d.message;
+    } else {
+      result.style.color = '#22c55e';
+      result.innerHTML = '✅ ' + d.message + '<br><br>' +
+        d.posts.map(p =>
+          `📅 Video #${p.content_id} → ${new Date(p.scheduled_at + 'Z').toLocaleString()}`
+        ).join('<br>');
+      toast(d.message);
+      setTimeout(() => location.reload(), 2000);
+    }
+  }catch(e){
+    result.style.display = 'block';
+    result.style.color = '#ef4444';
+    result.innerHTML = '❌ ' + e.message;
+    toast(e.message, 'error');
+  }finally{
+    btn.disabled = false;
+    btn.textContent = '🗓️ Auto-programar semana';
+  }
 }
 </script>
 {% endblock %}

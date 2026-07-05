@@ -246,7 +246,7 @@ Respond ONLY with this JSON (no extra text):
 
     body_segments = data.get("body", [])
     if isinstance(body_segments, list):
-        body_text = " ".join(
+        body_text = "\n\n".join(
             seg["text"] if isinstance(seg, dict) else str(seg)
             for seg in body_segments
         )

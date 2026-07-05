@@ -38,8 +38,14 @@ class BasePlatform(ABC):
 
     def format_caption(self, caption: str, hashtags: list[str], max_length: int = 2200) -> str:
         """Formatea caption + hashtags respetando límites."""
+        # Give each sentence/section its own breathing room
+        lines = [l.strip() for l in caption.strip().splitlines() if l.strip()]
+        spaced = "\n\n".join(lines)
+
+        cta_line = '💬 Comment "REBORN" if you want to know more.'
         tags_text = " ".join(f"#{t.lstrip('#')}" for t in hashtags)
-        full = f"{caption}\n\n{tags_text}"
+
+        full = f"{spaced}\n\n{cta_line}\n\n{tags_text}"
         if len(full) > max_length:
             full = full[:max_length - 3] + "..."
         return full

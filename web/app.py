@@ -242,6 +242,64 @@ async def publishing_page(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(request, "publishing.html", {"queue": queue, "scheduled": scheduled})
 
 
+@app.delete("/api/publishing/scheduled/{scheduled_id}")
+async def cancel_scheduled_post(scheduled_id: int, db: Session = Depends(get_db)):
+    sp = db.get(ScheduledPost, scheduled_id)
+    if not sp:
+        raise HTTPException(404, "Publicación no encontrada")
+    db.delete(sp)
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/publishing/auto-schedule")
+async def auto_schedule(
+    posts_per_day: int = 1,
+    best_hours: str = "18,19,20",
+    db: Session = Depends(get_db),
+):
+    from publishing.queue_manager import add_to_queue
+    from datetime import timedelta
+
+    hours = [int(h.strip()) for h in best_hours.split(",") if h.strip().isdigit()]
+    if not hours:
+        hours = [18, 19, 20]
+
+    # find queued content pieces that have a video but no scheduled post yet
+    already_scheduled_ids = {sp.content_id for sp in db.query(ScheduledPost).filter_by(status=ContentStatus.QUEUED).all()}
+    pieces = (
+        db.query(ContentPiece)
+        .filter(ContentPiece.status == ContentStatus.QUEUED)
+        .filter(ContentPiece.video_path.isnot(None))
+        .filter(ContentPiece.id.notin_(already_scheduled_ids))
+        .order_by(ContentPiece.created_at.desc())
+        .all()
+    )
+
+    if not pieces:
+        return {"scheduled": 0, "message": "No hay videos listos para programar. Produce videos primero."}
+
+    now = datetime.utcnow().replace(minute=0, second=0, microsecond=0)
+    scheduled = []
+
+    for i, piece in enumerate(pieces):
+        day_offset = i // posts_per_day
+        hour = hours[i % len(hours)]
+        publish_at = (now + timedelta(days=day_offset + 1)).replace(hour=hour, minute=0, second=0)
+
+        sp = add_to_queue(
+            content_id=piece.id,
+            platform=Platform.INSTAGRAM,
+            scheduled_at=publish_at,
+            caption=piece.hook or piece.title or "",
+            hashtags=piece.hashtags or [],
+        )
+        scheduler.schedule_post(sp.id, publish_at)
+        scheduled.append({"id": sp.id, "content_id": piece.id, "scheduled_at": publish_at.isoformat()})
+
+    return {"scheduled": len(scheduled), "message": f"{len(scheduled)} video(s) programados para Instagram", "posts": scheduled}
+
+
 @app.post("/api/publishing/schedule")
 async def schedule_post(req: ScheduleRequest):
     from publishing.queue_manager import add_to_queue
@@ -447,7 +505,7 @@ def _publish_instagram_task(content_id: int):
 
             post_id = ig.publish_video(
                 video_path=Path(piece.video_path),
-                caption=piece.hook or piece.title or "",
+                caption=piece.script or piece.hook or piece.title or "",
                 hashtags=raw_tags,
             )
             piece.status = ContentStatus.PUBLISHED
